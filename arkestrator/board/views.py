@@ -15,6 +15,7 @@ from django.shortcuts import render_to_response,get_object_or_404
 from django.http import HttpResponseRedirect, Http404
 from django.template import RequestContext
 from django.views.generic import list_detail
+from django.views.generic.list import ListView
 from django.db.models.signals import post_save
 from django.db.models import Sum, Count, Max, F
 from django.core.cache import cache
@@ -25,12 +26,74 @@ from arkestrator.profiles.models import Profile
 from arkestrator.events.models import Event
 from arkestrator.events.forms import RSVPForm
 from arkestrator.util import get_client_ip
-from models import Thread, Post, LastRead
+from arkestrator.views import LoginRequiredMixin
+from models import Thread, Post, LastRead, Favorite
 import forms
 
 from arkestrator.decorators import super_no_cache
 
 THREADS_PER_PAGE = 101
+
+class ThreadList(LoginRequiredMixin, ListView):
+
+    template_name = "board/thread_list.html"
+    paginate_by = THREADS_PER_PAGE
+    queryset = Thread.objects.order_by(
+            "-stuck","-last_post__id").select_related(
+            "creator","last_post","last_post__creator","favorite")
+
+    def get_context_data(self, **kwargs):
+        """ set up extra context data """
+        context = super(ThreadList, self).get_context_data(**kwargs)
+        context['object_list'] = self.last_reads(context['object_list'],
+                                                self.request.user)
+        context['object_list'] = self.favorites(context['object_list'],
+                                                self.request.user)
+
+        return context
+
+    def last_reads(self, thread_list, user):
+        """ Annotate a queryset of threads with the last read status for a user.
+            Add an unread boolean to each thread
+            if it was read before add a last_post_read id
+            :param: thread_list the list of threads to annotate
+            :param: user the user who should be looked up.
+        """
+
+        last_read = LastRead.objects.filter(
+                thread__in=thread_list,
+                user = user).values('thread__id', 'post__id')
+        last_viewed = dict((lr['thread__id'], lr['post__id']) for lr in last_read)
+        for t in thread_list:
+            try:
+                t.unread = last_viewed[t.id] < t.last_post_id
+                t.last_post_read = last_viewed[t.id]
+            except KeyError:
+                t.unread = True
+
+        return thread_list
+
+    def favorites(self, thread_list, user):
+        """ annotate a queryset of threads with a users favorites """
+        favs = Favorite.objects.filter(
+                                thread__in=thread_list,
+                                user=user).values('thread__id')
+
+        for thread in thread_list:
+            thread.fav = thread.id in favs
+        return thread_list
+
+class FavoritesList(ThreadList):
+    """ subclass of ThreadList that displays the current users favorites """
+
+    def get_queryset(self):
+        return Thread.objects.filter(favorite__user=self.request.user)
+
+class ThreadsByList(ThreadList):
+    """ Thread list takes a single argument the user id of the user """
+
+    def get_queryset(self):
+        return Thread.objects.filter(creator_id = self.args[0])
 
 @login_required
 def view_thread(request,id,start=False,expand=False,hide=None):

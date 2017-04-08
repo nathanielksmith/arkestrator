@@ -5,7 +5,7 @@ import views
 import models
 
 urlpatterns = patterns('',
-    url(r"^$",views.list_threads, name='list-threads'),
+    url(r"^$",views.ThreadList.as_view(), name='list-threads'),
     url(r"^threads/(?P<id>\d+)/$",views.view_thread,name='view-thread'),
     url(r"^threads/(?P<id>\d+)/(?P<start>\d+)/$",views.view_thread,
         name='view-thread-start'),
